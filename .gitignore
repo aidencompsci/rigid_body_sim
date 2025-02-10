@@ -1,7 +1,7 @@
-./.cache/
-./.idea/
+.cache/
+.idea/
 build/
 .build/
 compile_commands.json
 imgui.ini
-
+libs/
