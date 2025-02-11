@@ -161,7 +161,7 @@ void Init() {
 
 
     game_state = GameState{
-        .pos = Vector2{900, 300},
+        .pos = Vector2{900, 292},
         .spawn_count = 1,
         .world = Solver{
             .objects = std::vector<VerletObject>(),
