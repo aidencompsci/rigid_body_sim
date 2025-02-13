@@ -97,8 +97,35 @@ void Solver_apply_constraint(Solver* self) {
 #define VECTOR2_LENGTH_SQUARED(a) \
     ((a).x*(a).x+(a).y*(a).y)
 
+
+typedef struct {
+    std::vector<std::vector<std::vector<VerletObject>>> objects;
+} Grid;
+
+
+
+const float resp_coef = 0.75;
+
+
+[[inline]]
+void resolve_collision(VerletObject& ob1, VerletObject& ob2) {
+    const Vector2 v = VECTOR2_SUBTRACT(ob1.pos, ob2.pos);
+    const float dist2 = VECTOR2_LENGTH_SQUARED(v);
+    const float min_dist = ob1.radius + ob2.radius;
+
+    if (dist2 < min_dist*min_dist) {
+        const float dist = sqrt(dist2);
+        const auto norm = Vector2Normalize(v);
+        //radius == mass
+        const float mr1 = ob1.radius / (ob1.radius + ob2.radius);
+        const float mr2 = ob2.radius / (ob1.radius + ob2.radius);
+        const float delta = 0.5f * resp_coef * (dist - min_dist);
+        ob1.pos = Vector2Subtract(ob1.pos, Vector2Scale(norm, (mr2 * delta)));
+        ob2.pos = Vector2Add(ob2.pos, Vector2Scale(norm, (mr1 * delta)));
+    }
+}
+
 void Solver_check_collisions(Solver* self, float dt) {
-    const float resp_coef = 0.75;
     auto& objects = self->objects;
     const u_int32_t count = objects.size();
 
@@ -106,20 +133,7 @@ void Solver_check_collisions(Solver* self, float dt) {
         auto& ob1 = objects[i];
         for (u_int32_t l{i+1}; l < count; ++l) {
             auto& ob2 = objects[l];
-            const Vector2 v = VECTOR2_SUBTRACT(ob1.pos, ob2.pos);
-            const float dist2 = VECTOR2_LENGTH_SQUARED(v);
-            const float min_dist = ob1.radius + ob2.radius;
-
-            if (dist2 < min_dist*min_dist) {
-                const float dist = sqrt(dist2);
-                const auto norm = Vector2Normalize(v);
-                //radius == mass
-                const float mr1 = ob1.radius / (ob1.radius + ob2.radius);
-                const float mr2 = ob2.radius / (ob1.radius + ob2.radius);
-                const float delta = 0.5f * resp_coef * (dist - min_dist);
-                ob1.pos = Vector2Subtract(ob1.pos, Vector2Scale(norm, (mr2 * delta)));
-                ob2.pos = Vector2Add(ob2.pos, Vector2Scale(norm, (mr1 * delta)));
-            }
+            resolve_collision(ob1, ob2);
         }
     }
 }
