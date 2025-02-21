@@ -26,7 +26,7 @@ typedef struct {
     Vector2 pos;
     Vector2 last;
     Vector2 acc;
-    Color color;
+    // Color color;
     float radius;
     int id;
 } VerletObject;
@@ -59,60 +59,67 @@ Vector2 VerletObject_velocity_get(VerletObject* self, float dt) {
             );
 }
 
-const int MAX_CELL_OBJECTS = 1000;
-struct Cell {
-    std::vector<VerletObject*> objects;
-    Cell() {
-        objects.reserve(MAX_CELL_OBJECTS);
-    }
-};
+Color colorFromXY(int x, int y, Color a = BLACK, Color b = RED) {
+    auto tx = x % 2;
+    auto ty = y % 2;
+    auto tt = tx + ty;
+    auto color = tt == 1 ? a : b;
+    return color;
+}
 
-const int GRID_WIDTH = 100;
-const int GRID_HEIGHT = 100;
-const int CELL_SIZE = 10;
+Color colorFromXY(float x, float y, Color a = BLACK, Color b = RED) {
+    return colorFromXY(static_cast<int>(x), static_cast<int>(y), a, b);
+}
+
+constexpr int SCREEN_WIDTH = 1000;
+constexpr int SCREEN_HEIGHT = 1000;
+constexpr int CELL_SIZE = 25;
+constexpr int CELL_COUNT_X = SCREEN_WIDTH / CELL_SIZE;
+constexpr int CELL_COUNT_Y = SCREEN_HEIGHT / CELL_SIZE;
+constexpr int CELL_COUNT = CELL_COUNT_X * CELL_COUNT_Y;
+constexpr int CELL_INIT_COUNT = 1000;
 class SpacialHashGrid {
 public:
-    std::vector<Cell> cells;
+    std::vector<std::vector<VerletObject*>> cells;
     int total = 0;
 
-    SpacialHashGrid() = default;
-    SpacialHashGrid(size_t cellCount) : cells(cellCount) {}
+    SpacialHashGrid() : cells(CELL_COUNT) {
+        for (auto& cell : cells) {
+            cell.reserve(CELL_INIT_COUNT);
+        }
+    };
 
-    inline int getCellX(const VerletObject& ob) {
-        return static_cast<int>(ob.pos.x / CELL_SIZE);
+    inline static int getCellX(const VerletObject& ob) {
+        return ob.pos.x / CELL_SIZE;
     }
 
-    inline int getCellY(const VerletObject& ob) {
-        return static_cast<int>(ob.pos.y / CELL_SIZE);
+    inline static int getCellY(const VerletObject& ob) {
+        return ob.pos.y / CELL_SIZE;
     }
 
-    inline int getCellIndex(const VerletObject& ob) {
-        int x = getCellX(ob);
-        int y = getCellY(ob);
-        int index = x + (y * GRID_WIDTH);
-        return index;
+    inline static int getCellIndex(const VerletObject& ob) {
+        auto cx = getCellX(ob);
+        auto cy = getCellY(ob);
+        return getCellIndexXY(cx, cy);
     }
 
-    inline int getCellXY(int x, int y) {
-        int index = x + (y * GRID_WIDTH);
-        return index;
+    inline static int getCellIndexXY(int cx, int cy) {
+        return cx + (cy * CELL_COUNT_Y);
     }
 
     bool insert(VerletObject& ob) {
-        int index = getCellIndex(ob);
-        if (index < 0 || index > GRID_WIDTH*GRID_HEIGHT) {
+        auto index = getCellIndex(ob);
+        if (index < 0 || index >= CELL_COUNT) {
             return false;
         }
 
-        cells[index].objects.push_back(&ob);
-        total++;
+        cells[index].push_back(&ob);
         return true;
     }
 
     void clear() {
-        total = 0;
         for (auto& cell : cells) {
-            cell.objects.clear();
+            cell.clear();
         }
     }
 
@@ -120,38 +127,37 @@ public:
         clear();
 
         for (auto& ob : objects) {
-            if (!insert(ob)) {
-                return false;
-            };
+            insert(ob);
+            // if (!insert(ob)) {
+            //     return false;
+            // };
         }
 
         return true;
     }
 
     int query(const VerletObject& ob, VerletObject* results[], int capacity) {
-        int cx = getCellX(ob);
-        int cy = getCellY(ob);
-        int index = getCellIndex(ob);
-        if (index < 0 || index > GRID_WIDTH*GRID_HEIGHT) {
-            return 0;
-        }
+        const auto obcx = getCellX(ob);
+        const auto obcy = getCellY(ob);
 
-        int resultCount = 0;
+        int count = 0;
 
-        for (int l = cy - 1; l <= cy + 1; l++) {
-            if (l < 0 || l >= GRID_HEIGHT) continue;
-            for (int i = cx - 1; i <= cx + 1; i++) {
-                if (i < 0 || i >= GRID_WIDTH) continue;
-                int index = getCellXY(i, l);
-                for (auto ob2 : cells[index].objects) {
-                    if (ob.id == ob2->id) continue;
-                    results[resultCount] = ob2;
-                    resultCount++;
+        for (int cx = obcx - 1; cx <= obcx + 1; cx++) {
+            for (int cy = obcy - 1; cy <= obcy + 1; cy++) {
+                auto index = getCellIndexXY(cx, cy);
+                if (index < 0 || index > CELL_COUNT) continue;
+                auto cell = cells[index];
+                for (auto& ob2 : cell) {
+                    if (count > capacity-1) return count;
+                    // if (ob.id != ob2->id) {
+                        results[count] = ob2;
+                        count++;
+                    // }
                 }
             }
         }
 
-        return resultCount;
+        return count;
     }
 };
 
@@ -181,15 +187,15 @@ void Solver_move_objects(Solver* self, float dt) {
 void Solver_apply_constraint(Solver* self) {
     for (auto& ob : self->objects) {
         const Vector2 v = Vector2Subtract(self->constraint_center, ob.pos);
-        const float dist = Vector2Length(v);
-        if (dist > (self->constraint_radius - ob.radius)) {
-            ob.pos = Vector2Subtract(
-                    self->constraint_center,
-                    Vector2Scale(
-                        Vector2Normalize(v),
-                        (self->constraint_radius - ob.radius)
-                        )
-                    );
+        const float dist = sqrt(v.x*v.x + v.y*v.y);
+        const auto pen_depth = self->constraint_radius - ob.radius;
+        if (dist > pen_depth) {
+            const auto n = Vector2{
+                .x = v.x / dist,
+                .y = v.y / dist,
+            };
+            const auto correction = Vector2Scale(n, pen_depth);
+            ob.pos = Vector2Subtract(self->constraint_center, correction);
         }
     }
 }
@@ -221,11 +227,16 @@ void resolve_collision(VerletObject& ob1, VerletObject& ob2) {
 }
 
 
-const int RESULTS_CAPACITY = MAX_CELL_OBJECTS * 9;
+// const int MAX_CELL_OBJECTS = 2*CELL_SIZE*CELL_SIZE;
+// const int RESULTS_CAPACITY = MAX_CELL_OBJECTS * 9;
+const int RESULTS_CAPACITY = 1000;
 VerletObject* results[RESULTS_CAPACITY];
 void Solver_check_collisions(Solver* self) {
+    int max_count = 0;
     for (auto& ob1 : self->objects) {
+        // self->grid.rebuild(self->objects);
         int count = self->grid.query(ob1, results, RESULTS_CAPACITY);
+        if (count > max_count) max_count = count;
         for (int i = 0; i < count && i < RESULTS_CAPACITY; i++) {
             auto ob2 = *results[i];
             const Vector2 v = VECTOR2_SUBTRACT(ob1.pos, ob2.pos);
@@ -244,6 +255,7 @@ void Solver_check_collisions(Solver* self) {
             }
         }
     }
+    std::cout << "max count: " << max_count << "\n";
 }
 
 void Solver_Update(Solver* self, float dt) {
@@ -271,56 +283,73 @@ typedef struct {
     Vector2 pos;
     Solver world;
     int spawn_count;
+    bool should_draw_grid;
 } GameState;
 
 
-const int screenWidth = 1000;
-const int screenHeight = 1000;
 GameState game_state;
 
 void Init() {
-    InitWindow(screenWidth, screenHeight, "raylib + rlImGui + ImGui Example");
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "raylib + rlImGui + ImGui Example");
     rlImGuiSetup(true);
     SetTargetFPS(144);
 
 
     game_state = GameState{
-        .pos = Vector2{600, 292},
+        .pos = Vector2{515, 500},
         .world = Solver{
             .objects = {},
-            .grid = SpacialHashGrid(GRID_WIDTH*GRID_HEIGHT),
+            .grid = SpacialHashGrid(),
             .constraint_center = {500, 500},
             .constraint_radius = 450,
-            .sub_steps = 8,
+            .sub_steps = 1,
             .should_constrain = true,
         },
         .spawn_count = 1,
     };
 
-    game_state.world.objects.reserve(10000);
+    // game_state.world.objects.reserve(10000);
+}
+
+int counter = 0;
+void addBall(int offx = 0, int offy = 0) {
+    for (int x = game_state.pos.x-offx; x <= game_state.pos.x+offx; x++) {
+        for (int y = game_state.pos.y-offy; y <= game_state.pos.y+offy; y++) {
+            game_state.world.objects.push_back(VerletObject{
+                .pos = Vector2{.x=static_cast<float>(x), .y=static_cast<float>(y)},
+                .last = Vector2{.x=static_cast<float>(x), .y=static_cast<float>(y)},
+                .acc = {0, 0},
+                // .color = getRainbow((GetTime() * 2) + 2),
+                // .radius = static_cast<float>(GetRandomValue(2, 5)),
+                .radius = 10,
+                .id = counter++,
+            });
+        }
+    }
 }
 
 void Update() {
     Solver_Update(&game_state.world, GetFrameTime());
+    // if (IsMouseButtonDown(MouseButton::MOUSE_BUTTON_RIGHT)) {
+    //     auto mpos = GetMousePosition();
+    //     game_state.pos = mpos;
+    //     if (IsMouseButtonDown(MouseButton::MOUSE_BUTTON_LEFT)) {
+    //         for (int i = 0; i < game_state.spawn_count; ++i) {
+    //             addBall(2, 2);
+    //         }
+    //     }
+    // }
 }
 
-int counter = 0;
 void GuiDraw() {
     ImGui::Begin("Debug");
     ImGui::SliderFloat("Pos.x", &game_state.pos.x, 0, static_cast<float>(GetScreenWidth()));
     ImGui::SliderFloat("Pos.y", &game_state.pos.y, 0, static_cast<float>(GetScreenHeight()));
     ImGui::DragInt("Spawn Count", &game_state.spawn_count);
-    if (ImGui::Button("Spawn Object at position")) { // || ImGui::IsItemActive()) {
-    // if (ImGui::Button("Spawn Object at position") || ImGui::IsItemActive()) {
+    // if (ImGui::Button("Spawn Object at position")) { // || ImGui::IsItemActive()) {
+    if (ImGui::Button("Spawn Object at position") || ImGui::IsItemActive()) {
         for (int i = 0; i < game_state.spawn_count; ++i) {
-            game_state.world.objects.push_back(VerletObject{
-                    .pos = Vector2Copy(game_state.pos),
-                    .last = Vector2Copy(game_state.pos),
-                    .acc = {0, 0},
-                    .color = getRainbow((GetTime()*2)+2),
-                    .radius = 10,
-                    .id = counter++,
-            });
+            addBall();
         }
     }
     if (ImGui::Button("Toggle Constraint")) {
@@ -329,13 +358,41 @@ void GuiDraw() {
     if (ImGui::Button("Clear objects")) {
         game_state.world.objects.clear();
     }
+    if (ImGui::Button("Deccelerate")) {
+        for (auto& ob : game_state.world.objects) {
+            ob.acc = {0, 0};
+            ob.last = ob.pos;
+        }
+    }
+    if (ImGui::Button("Toggle grid draw")) {
+        game_state.should_draw_grid = !game_state.should_draw_grid;
+    }
     ImGui::End();
 }
 
+constexpr int pad = 2;
 int gamecount = 0;
 void GameDraw() {
+    if (game_state.should_draw_grid) {
+        for (int x = 0; x < CELL_COUNT_X; x++) {
+            for (int y = 0; y < CELL_COUNT_Y; y++) {
+                auto color = colorFromXY(x, y, GRAY, PINK);
+                DrawRectangle(x*CELL_SIZE, y*CELL_SIZE, CELL_SIZE-pad, CELL_SIZE-pad, color);
+            }
+        }
+    }
+
     for (auto& ob : game_state.world.objects) {
-        DrawCircleV(ob.pos, ob.radius, ob.color);
+        // auto temp = static_cast<float>(SpacialHashGrid::getCellIndex(ob))/GRID_WIDTH*GRID_HEIGHT;
+        // const auto color = ColorFromHSV(temp, 0.8, 1.0);
+        const auto cx = static_cast<float>(SpacialHashGrid::getCellX(ob));
+        const auto cy = static_cast<float>(SpacialHashGrid::getCellY(ob));
+        // const auto x = (ob.pos.x - cx * CELL_SIZE) / static_cast<float>(CELL_SIZE);
+        // const auto y = (ob.pos.y - cy * CELL_SIZE) / static_cast<float>(CELL_SIZE);
+        const auto color = ColorFromNormalized(Vector4{cx / CELL_COUNT_X, cy / CELL_COUNT_Y, 1.0, 1.0});
+        // const auto color = colorFromXY(ob.pos.x / CELL_SIZE, ob.pos.y / CELL_SIZE);
+        DrawCircleV(ob.pos, ob.radius, color);
+        // std::cout << ob.id << ": " << cx << ", " << cy << " = " << SpacialHashGrid::getCellIndex(ob) << "\n";
     }
 
     DrawCircleV(game_state.pos, 10, PURPLE);
