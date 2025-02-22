@@ -54,7 +54,7 @@ Vector2 VerletObject_velocity_get(VerletObject* self, float dt) {
             );
 }
 
-const Vector2 gravity = Vector2{0, 1000};
+// const Vector2 gravity = Vector2{0, 1000};
 typedef struct{
     std::vector<VerletObject> objects;
     Vector2 constraint_center;
@@ -63,11 +63,11 @@ typedef struct{
 } Solver;
 
 
-void Solver_apply_gravity(Solver* self, float dt) {
-    for (auto& ob : self->objects) {
-        VerletObject_accelerate(&ob, gravity);
-    }
-}
+// void Solver_apply_gravity(Solver* self, float dt) {
+//     for (auto& ob : self->objects) {
+//         VerletObject_accelerate(&ob, gravity);
+//     }
+// }
 
 void Solver_move_objects(Solver* self, float dt) {
     for (auto& ob : self->objects) {
@@ -77,16 +77,17 @@ void Solver_move_objects(Solver* self, float dt) {
 
 void Solver_apply_constraint(Solver* self) {
     for (auto& ob : self->objects) {
-        const Vector2 v = Vector2Subtract(self->constraint_center, ob.pos);
-        const float dist = Vector2Length(v);
-        if (dist > (self->constraint_radius - ob.radius)) {
-            ob.pos = Vector2Subtract(
-                    self->constraint_center,
-                    Vector2Scale(
-                        Vector2Normalize(v),
-                        (self->constraint_radius - ob.radius)
-                        )
-                    );
+        const auto v = Vector2Subtract(self->constraint_center, ob.pos);
+        const auto dist = sqrt(v.x*v.x + v.y*v.y);
+        const auto correction = self->constraint_radius - ob.radius;
+        if (dist > correction) {
+            const auto unit_normal = Vector2{
+                .x = v.x/dist,
+                .y = v.y/dist,
+            };
+            const auto normal = Vector2Scale(unit_normal, correction);
+            ob.last = ob.pos;
+            ob.pos = Vector2Subtract(self->constraint_center, normal);
         }
     }
 }
@@ -127,7 +128,7 @@ void Solver_check_collisions(Solver* self, float dt) {
 void Solver_Update(Solver* self, float dt) {
     const float step_dt = dt / static_cast<float>(self->sub_steps);
     for (u_int32_t i{self->sub_steps}; i--;) {
-        Solver_apply_gravity(self, step_dt);
+        // Solver_apply_gravity(self, step_dt);
         Solver_check_collisions(self, step_dt);
         Solver_apply_constraint(self);
         Solver_move_objects(self, step_dt);
@@ -161,7 +162,7 @@ void Init() {
 
 
     game_state = GameState{
-        .pos = Vector2{900, 292},
+        .pos = Vector2{500, 500},
         .spawn_count = 1,
         .world = Solver{
             .objects = std::vector<VerletObject>(),
@@ -181,16 +182,26 @@ void GuiDraw() {
     ImGui::SliderFloat("Pos.x", &game_state.pos.x, 0, static_cast<float>(GetScreenWidth()));
     ImGui::SliderFloat("Pos.y", &game_state.pos.y, 0, static_cast<float>(GetScreenHeight()));
     ImGui::DragInt("Spawn Count", &game_state.spawn_count);
-    if(ImGui::Button("Spawn Object at position") || ImGui::IsItemActive()) {
+    if(ImGui::Button("Spawn Object at position")) {
+    // if(ImGui::Button("Spawn Object at position") || ImGui::IsItemActive()) {
         for (int i = 0; i < game_state.spawn_count; ++i) {
-            game_state.world.objects.push_back(VerletObject{
-                    .pos = Vector2Copy(game_state.pos),
-                    .last = Vector2Copy(game_state.pos),
-                    .acc = {0, 0},
-                    .radius = 10,
-                    .color = getRainbow((GetTime()*2)+2),
-                    });
+            auto ob = VerletObject{
+                .pos = Vector2Copy(game_state.pos),
+                .last = Vector2Copy(game_state.pos),
+                .acc = {1, 0},
+                .radius = 10,
+                .color = getRainbow((GetTime() * 2) + 2),
+            };
+            auto xvel = static_cast<float>(GetRandomValue(-10, 10))/10.0f;
+            auto yvel = static_cast<float>(GetRandomValue(-10, 10))/10.0f;
+            auto vel_mag = static_cast<float>(GetRandomValue(1, 10));
+            auto v = Vector2{.x = xvel, .y = yvel};
+            VerletObject_velocity_set(&ob, v, vel_mag);
+            game_state.world.objects.push_back(ob);
         }
+    }
+    if (ImGui::Button("Clear")) {
+        game_state.world.objects.clear();
     }
     ImGui::End();
 }
